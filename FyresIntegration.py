@@ -88,6 +88,19 @@ def automated_login(client_id,secret_key,FY_ID,TOTP_KEY,PIN,redirect_uri):
     fyers = fyersModel.FyersModel(client_id=client_id, is_async=False, token=access_token, log_path=os.getcwd())
     print(fyers.get_profile())
 
+def get_ltp(SYMBOL):
+    global fyers
+    data={"symbols":f"{SYMBOL}"}
+    res=fyers.quotes(data)
+    if 'd' in res and len(res['d']) > 0:
+        lp = res['d'][0]['v']['lp']
+        return lp
+
+    else:
+        print("Last Price (lp) not found in the response.")
+
+
+
 
 def get_position():
     global fyers

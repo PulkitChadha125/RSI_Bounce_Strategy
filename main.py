@@ -1,6 +1,5 @@
 import math
 import sqlite3
-
 import FyresIntegration
 import time
 import traceback
@@ -9,9 +8,46 @@ from pathlib import Path
 import pyotp
 from Algofox import *
 from datetime import datetime, timedelta, timezone
+from py_vollib.black_scholes.implied_volatility import implied_volatility
+from py_vollib.black_scholes.greeks.analytical import delta
 result_dict = {}
 
 
+# optionsymbol = f"NSE:{params['Symbol']}{params['TradeExpiery']}22400CE"
+from datetime import datetime, timedelta
+
+
+def convert_julian_date(julian_date):
+    input_format = "%y%m%d"
+    parsed_date = datetime.strptime(str(julian_date), input_format)
+
+    # Add the desired time (15:30:00) to the parsed date
+    desired_time = "15:30:00"
+    formatted_date_with_time = parsed_date.replace(hour=15, minute=30, second=0)
+
+    return formatted_date_with_time
+
+
+def get_delta(strikeltp,underlyingprice,strike,timeexpiery,riskfreeinterest,flag):
+    from py_vollib.black_scholes.greeks.analytical import delta
+    iv= implied_volatility(price=strikeltp,S=underlyingprice,K=strike,t=timeexpiery,r=riskfreeinterest,flag=flag)
+    value = delta(flag,underlyingprice,strike,timeexpiery,riskfreeinterest,iv)
+    print("delta",value)
+    return value
+
+def option_delta_calculation(symbol,expiery,strike,optiontype,underlyingprice):
+    optionsymbol = f"NSE:{symbol}{expiery}{strike}{optiontype}"
+    optionltp= FyresIntegration.get_ltp(optionsymbol)
+    print("expiery: ",expiery)
+    distanceexp=convert_julian_date(expiery)
+    print("distanceexp: ",distanceexp)
+    t= (distanceexp-datetime.now())/timedelta(days=1)/365
+    if optiontype=="CE":
+        fg="c"
+    else :
+        fg = "p"
+    value=get_delta(strikeltp=optionltp, underlyingprice=underlyingprice, strike=strike, timeexpiery=t,flag=fg ,riskfreeinterest=0.1)
+    return value
 
 def custom_round(price, symbol):
     rounded_price = None
@@ -37,6 +73,18 @@ def custom_round(price, symbol):
         pass
 
     return rounded_price
+
+def getstrikes(ltp, step , strikestep):
+    result = {}
+    result[int(ltp)] = None
+    for i in range(step):
+        result[int(ltp - strikestep * (i + 1))] = None
+    for i in range(step):
+        result[int(ltp + strikestep * (i + 1))] = None
+    return result
+
+
+
 
 def write_to_order_logs(message):
     with open('OrderLog.txt', 'a') as file:  # Open the file in append mode
@@ -76,6 +124,9 @@ def get_user_settings():
                 "NO_TARGET": float(row['NO_TARGET']),
                 "NO_STOPLOSS": float(row['NO_TARGET']),
                 "NO_BREAKEVEN": float(row['NO_BREAKEVEN']),
+                "TradeExpiery":row['TradeExpiery'],
+                "strikestep": int(row['strikestep']),
+                "NumberOfstrike": int(row['NumberOfstrike']),
                 'call_signal':False,
                 'put_signal': False,
                 'breakeven_value': False,
@@ -150,17 +201,6 @@ def putSticky(low):
     else:
         buy_price = price - 0.10
         buy_price = price - 0.10
-#
-# def putSignal(buy_price):
-#         """After put signal this block is responsible for taking trade or cancel signal"""
-#     print("buy price = ", buy_price)
-#     if ltp <= buy_price and put_signal:
-#         symbole_gen_Put()
-#         put_trade = True # in  put trade
-#         self.send_msg("put trade Taken")
-#     elif (currsi > 50 or currside == 1) and put_signal:
-#         put_signal = False
-#         print("signal void")
 
 
 def callSticky(high):
@@ -178,16 +218,6 @@ def callSticky(high):
         buy_price = price + 0.10
 
     return buy_price
-#
-# def callSignal():
-#         """After call signal this block is responsible for taking trade or cancel signal"""
-#     if ltp >= buy_price and call_signal:
-#         symbole_gen_Call()
-#         call_trade = True # in buy trade
-#         send_msg("call trade taken")
-#     elif (currsi < 50 or currside == -1) and call_signal:
-#         call_signal = False
-#         send_msg("signal void")
 
 
 
@@ -200,12 +230,13 @@ def main_strategy():
             timestamp = datetime.now()
             timestamp = timestamp.strftime("%d/%m/%Y %H:%M:%S")
             if isinstance(symbol_value, str):
+
                 date_object = datetime.strptime(params['expiery'], '%d-%b-%y')
                 new_date_string = date_object.strftime('%y%b').upper()
                 formatedsymbol= f"NSE:{params['Symbol']}{new_date_string}FUT"
                 print(formatedsymbol)
                 data= FyresIntegration.fetchOHLC(symbol=formatedsymbol,rsi_period=params['RSI_Period'] ,supertrend_period=params['SP_Period'],supertrend_multiplier=params['SP_MULTIPLIER'])
-                print("data: ",data)
+
                 # print("relevant data= ",data.iloc[-2]['date'])//current
                 sp_current=data.iloc[-2]['Supertrend Signal']
                 sp_previous=data.iloc[-3]['Supertrend Signal']
@@ -218,9 +249,8 @@ def main_strategy():
                 prevclose=data.iloc[-3]['close']
                 prevthirdclose=data.iloc[-4]['close']
                 prevlow=data.iloc[-3]['low']
-                ltp="Fetch current symbol ltp task to be done"
+                ltp=FyresIntegration.get_ltp(formatedsymbol)
 
-            # callSignalGenerator
 
             if sp_previous == 1 and sp_current == 1 and rsi_previous < params['RSI_LEVEL'] and rsi_current >  params['RSI_LEVEL'] and params['call_signal']==False:
                 params['call_signal']= True
@@ -230,8 +260,11 @@ def main_strategy():
                 params['breakeven_value']= high+params['BREAKEVEN']
                 params['stoploss_value']= high-params['STOPLOSS']
                 params['target_value']= high+ params['TARGET']
+                orderlog=f"Call signal Genarated  {formatedsymbol},@ {buyprice} candle high {high}, Target = {params['target_value']}, Stoploss= {params['stoploss_value']}, Breakeven={params['breakeven_value']} "
+                write_to_order_logs(orderlog)
+                print(orderlog)
 
-            # putSignalGenerator
+
             if sp_previous == -1 and sp_current == -1 and rsi_previous >  params['RSI_LEVEL'] and rsi_current <  params['RSI_LEVEL'] and params['put_signal']==False:
                 params['call_signal']= False
                 params['put_signal']= True
@@ -240,61 +273,110 @@ def main_strategy():
                 params['breakeven_value']= low - params['BREAKEVEN']
                 params['stoploss_value']= low + params['STOPLOSS']
                 params['target_value']= low - params['TARGET']
+                orderlog = f"Put signal Genarated  {formatedsymbol},@ {buyprice} candle high {high}, Target = {params['target_value']}, Stoploss= {params['stoploss_value']}, Breakeven={params['breakeven_value']} "
+                write_to_order_logs(orderlog)
+                print(orderlog)
 
 
             if params['pattern']== "PUT":
                 if ltp <= buyprice and buyprice>0 and params['put_signal']== True  and params['TradeActive']==None:
                     # symbole_gen_Put()
+                    # strikelist=getstrikes(ltp=custom_round(price=ltp, symbol=symbol), step=params['NumberOfstrike'], strikestep=params['strikestep'])
+                    strikelist = getstrikes(ltp=custom_round(price=ltp, symbol=symbol), step=params['NumberOfstrike'], strikestep=params['strikestep'])
+                    for strike in strikelist:
+                        delta = float(
+                            option_delta_calculation(symbol=symbol, expiery=params['TradeExpiery'], strike=strike, optiontype="PE",
+                                                     underlyingprice=ltp))
+                        strikelist[strike] = delta
+
+                    print(strikelist)
+
+
+
                     params['TradeActive']= "PUTTRADEACTIVE"
                     put_trade = True  # in  put trade
-                    print("put trade Taken")
+                    orderlog = f"Put trade executed  "
+                    write_to_order_logs(orderlog)
+                    print(orderlog)
+
+
                 elif (rsi_current > 50 or sp_current == 1) and params['put_signal']== True:
                     params['put_signal'] = False
-                    print("signal void")
+                    orderlog = f"Put signal canceled"
+                    write_to_order_logs(orderlog)
+                    print(orderlog)
 
             if params['pattern'] == "CALL":
                 if ltp >= buyprice and buyprice>0and params['call_signal']== True  and params['TradeActive']==None:
                     # symbole_gen_Call()
                     params['TradeActive'] = "CALLTRADEACTIVE"
+                    strikelist = getstrikes(ltp=custom_round(price=ltp, symbol=symbol), step=params['NumberOfstrike'],
+                                            strikestep=params['strikestep'])
+                    for strike in strikelist:
+                        delta = float(
+                            option_delta_calculation(symbol=symbol, expiery=params['TradeExpiery'], strike=strike,
+                                                     optiontype="CE",
+                                                     underlyingprice=ltp))
+                        strikelist[strike] = delta
+
+                    print(strikelist)
                     call_trade = True  # in buy trade
-                    print("call trade taken")
+                    orderlog = f"Call trade executed  "
+                    write_to_order_logs(orderlog)
+                    print(orderlog)
+
                 elif (rsi_current < 50 or sp_current == -1) and params['call_signal']== True:
                     params['call_signal'] = False
-                    print("signal void")
+                    orderlog = f"Call signal canceled"
+                    write_to_order_logs(orderlog)
+                    print(orderlog)
 
             if params['TradeActive']== "PUTTRADEACTIVE" and params['put_signal']== True:
                 if ltp<=params['breakeven_value'] and params['breakeven_value']>=0:
                     params['breakeven_value']=0
-                    print("Breakeven executed")
+                    orderlog = f"Breakeven executed @ {ltp} "
+                    write_to_order_logs(orderlog)
+                    print(orderlog)
 
                 if ltp<=params['target_value'] and params['target_value']>=0:
                     params['target_value']=0
                     params['put_signal'] = False
-                    print("target executed")
+                    orderlog = f"Target executed @ {ltp} "
+                    write_to_order_logs(orderlog)
+                    print(orderlog)
 
                 if ltp>=params['stoploss_value'] and params['stoploss_value']>=0:
                     params['stoploss_value']=0
                     params['put_signal'] = False
-                    print("stoploss executed")
+                    orderlog = f"Stoploss executed @ {ltp} "
+                    write_to_order_logs(orderlog)
+                    print(orderlog)
 
             if params['TradeActive'] == "CALLTRADEACTIVE" and params['call_signal'] == True:
                 if ltp >= params['breakeven_value'] and params['breakeven_value'] >= 0:
                     params['breakeven_value'] = 0
-                    print("Breakeven executed")
+                    orderlog = f"Breakeven executed @ {ltp} "
+                    write_to_order_logs(orderlog)
+                    print(orderlog)
 
                 if ltp >= params['target_value'] and params['target_value'] >= 0:
                     params['target_value'] = 0
                     params['call_signal']=False
-                    print("target executed")
+                    orderlog = f"Target executed @ {ltp} "
+                    write_to_order_logs(orderlog)
+                    print(orderlog)
 
                 if ltp <= params['stoploss_value'] and params['stoploss_value'] >= 0:
                     params['stoploss_value'] = 0
                     params['call_signal'] = False
-                    print("stoploss executed")
+                    orderlog = f"Stoploss executed @ {ltp} "
+                    write_to_order_logs(orderlog)
+                    print(orderlog)
 
     except Exception as e:
         print("Error happened in Main strategy loop: ", str(e))
         traceback.print_exc()
+
 
 while True:
     main_strategy()
