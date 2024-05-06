@@ -1,0 +1,1 @@
+06/05/2024 15:24:59 Put signal Genarated  NSE:NIFTY24MAYFUT,@ 22548.9 candle high 22557.0, Target = 22500.05, Stoploss= 22600.05, Breakeven=22530.05 

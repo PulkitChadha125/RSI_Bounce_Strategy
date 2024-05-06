@@ -12,6 +12,8 @@ from urllib.parse import parse_qs, urlparse
 import warnings
 import pandas as pd
 import pandas_ta as ta
+
+
 fyers=None
 
 def apiactivation(client_id,redirect_uri,response_type,state,secret_key,grant_type):
@@ -147,3 +149,4 @@ def fetchOHLC(symbol, rsi_period, supertrend_period, supertrend_multiplier):
 
 
     return df.tail(5)
+

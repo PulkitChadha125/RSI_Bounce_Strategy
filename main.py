@@ -493,22 +493,6 @@ def main_strategy():
         traceback.print_exc()
 
 
-# def check_delta_every_strike():
-#     strikelist=getstrikes(ltp=custom_round(price=22475.85, symbol="NIFTY"), step=5, strikestep=50)
-#     for strike in strikelist:
-#         delta = float( option_delta_calculation(symbol="NIFTY", expiery=24509, strike=strike, optiontype="CE", underlyingprice=22475))
-#         strikelist[strike] = delta
-#
-#     print(strikelist)
-#     print(find_nearest_greater_than_six_tenths(strikelist))
-#
-#
-#
-#
-# check_delta_every_strike()
-
-
-
 
 while True:
     main_strategy()
