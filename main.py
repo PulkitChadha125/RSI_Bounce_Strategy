@@ -1,5 +1,6 @@
 import math
 import sqlite3
+import Algofox
 import FyresIntegration
 import time
 import traceback
@@ -11,12 +12,26 @@ from datetime import datetime, timedelta, timezone
 from py_vollib.black_scholes.implied_volatility import implied_volatility
 from py_vollib.black_scholes.greeks.analytical import delta
 result_dict = {}
-
-
 # optionsymbol = f"NSE:{params['Symbol']}{params['TradeExpiery']}22400CE"
+
 from datetime import datetime, timedelta
+def fetchcorrectstrike(strikelist):
+    target_value = 0.6
+    closest_key = None
+    min_difference = float('inf')
 
+    for key, value in strikelist.items():
+        if value > target_value and value - target_value < min_difference:
+            min_difference = value - target_value
+            closest_key = key
 
+    return closest_key
+def convert_date_to_short_format(date_string):
+    # Parse the date string into a datetime object
+    date_obj = datetime.strptime(date_string, "%Y-%m-%d")
+    # Format the datetime object into the desired short format
+    short_format = date_obj.strftime("%y%b").upper()  # Convert to uppercase
+    return short_format
 def convert_julian_date(julian_date):
     input_format = "%y%m%d"
     parsed_date = datetime.strptime(str(julian_date), input_format)
@@ -35,11 +50,14 @@ def get_delta(strikeltp,underlyingprice,strike,timeexpiery,riskfreeinterest,flag
     print("delta",value)
     return value
 
-def option_delta_calculation(symbol,expiery,strike,optiontype,underlyingprice):
+def option_delta_calculation(symbol,expiery,strike,optiontype,underlyingprice,MODE):
     optionsymbol = f"NSE:{symbol}{expiery}{strike}{optiontype}"
     optionltp= FyresIntegration.get_ltp(optionsymbol)
     print("expiery: ",expiery)
-    distanceexp=convert_julian_date(expiery)
+    if MODE=="WEEKLY":
+        distanceexp=convert_julian_date(expiery)
+    if MODE=="MONTHLY":
+        distanceexp=expiery
     print("distanceexp: ",distanceexp)
     t= (distanceexp-datetime.now())/timedelta(days=1)/365
     if optiontype=="CE":
@@ -119,6 +137,7 @@ def get_user_settings():
                 'SP_MULTIPLIER': float(row['SP_MULTIPLIER']),
                 "RSI_LEVEL": float(row['RSI_LEVEL']),
                 "TARGET": float(row['TARGET']),
+                "lotsize": float(row['lotsize']),
                 "STOPLOSS": float(row['STOPLOSS']),
                 "BREAKEVEN": float(row['BREAKEVEN']),
                 "NO_TARGET": float(row['NO_TARGET']),
@@ -127,6 +146,14 @@ def get_user_settings():
                 "TradeExpiery":row['TradeExpiery'],
                 "strikestep": int(row['strikestep']),
                 "NumberOfstrike": int(row['NumberOfstrike']),
+                'strategytag': row['strategytag'],
+                "USEEXPIERY":row['USEEXPIERY'],
+                'ep':None,
+                'tgtcount': 0,
+                'slcount': 0,
+                'breakcount':0,
+                'AlgoFoxSymbol':None,
+                'OptionSymbol':None,
                 'call_signal':False,
                 'put_signal': False,
                 'breakeven_value': False,
@@ -202,6 +229,8 @@ def putSticky(low):
         buy_price = price - 0.10
         buy_price = price - 0.10
 
+    return buy_price
+
 
 def callSticky(high):
     price = math.ceil(high)
@@ -221,9 +250,13 @@ def callSticky(high):
 
 
 
+
 def main_strategy():
     global result_dict
     buyprice=0
+    username = credentials_dict.get('algofoxusername')
+    password = credentials_dict.get('algofoxpassword')
+    role = credentials_dict.get('ROLE')
     try:
         for symbol, params in result_dict.items():
             symbol_value = params['Symbol']
@@ -252,28 +285,46 @@ def main_strategy():
                 ltp=FyresIntegration.get_ltp(formatedsymbol)
 
 
-            if sp_previous == 1 and sp_current == 1 and rsi_previous < params['RSI_LEVEL'] and rsi_current >  params['RSI_LEVEL'] and params['call_signal']==False:
+            if  (
+                    params['slcount']<=params["NO_STOPLOSS"] and
+                    params['tgtcount']<=params["NO_TARGET"] and
+                    params['breakcount']<=params["NO_BREAKEVEN"] and
+                    sp_previous == 1 and sp_current == 1 and rsi_previous < params['RSI_LEVEL']
+                    and rsi_current >  params['RSI_LEVEL'] and
+                    params['call_signal']==False
+            ):
+
                 params['call_signal']= True
                 params['put_signal']= False
                 buyprice=callSticky(high)
                 params['pattern'] = "CALL"
+                params['ep'] = high
                 params['breakeven_value']= high+params['BREAKEVEN']
                 params['stoploss_value']= high-params['STOPLOSS']
                 params['target_value']= high+ params['TARGET']
-                orderlog=f"Call signal Genarated  {formatedsymbol},@ {buyprice} candle high {high}, Target = {params['target_value']}, Stoploss= {params['stoploss_value']}, Breakeven={params['breakeven_value']} "
+                orderlog=f"{timestamp} Call signal Genarated  {formatedsymbol},@ {buyprice} candle high {high}, Target = {params['target_value']}, Stoploss= {params['stoploss_value']}, Breakeven={params['breakeven_value']} "
                 write_to_order_logs(orderlog)
                 print(orderlog)
 
 
-            if sp_previous == -1 and sp_current == -1 and rsi_previous >  params['RSI_LEVEL'] and rsi_current <  params['RSI_LEVEL'] and params['put_signal']==False:
+            if (
+                    params['slcount']<=params["NO_STOPLOSS"] and
+                    params['tgtcount']<=params["NO_TARGET"] and
+                    params['breakcount']<=params["NO_BREAKEVEN"] and
+                    sp_previous == -1 and sp_current == -1 and rsi_previous >  params['RSI_LEVEL'] and
+                    rsi_current <  params['RSI_LEVEL'] and
+                    params['put_signal']==False
+            ):
                 params['call_signal']= False
                 params['put_signal']= True
                 buyprice = putSticky(low)
                 params['pattern']= "PUT"
+                params['ep'] = low
+
                 params['breakeven_value']= low - params['BREAKEVEN']
                 params['stoploss_value']= low + params['STOPLOSS']
                 params['target_value']= low - params['TARGET']
-                orderlog = f"Put signal Genarated  {formatedsymbol},@ {buyprice} candle high {high}, Target = {params['target_value']}, Stoploss= {params['stoploss_value']}, Breakeven={params['breakeven_value']} "
+                orderlog = f"{timestamp} Put signal Genarated  {formatedsymbol},@ {buyprice} candle high {high}, Target = {params['target_value']}, Stoploss= {params['stoploss_value']}, Breakeven={params['breakeven_value']} "
                 write_to_order_logs(orderlog)
                 print(orderlog)
 
@@ -286,23 +337,37 @@ def main_strategy():
                     for strike in strikelist:
                         delta = float(
                             option_delta_calculation(symbol=symbol, expiery=params['TradeExpiery'], strike=strike, optiontype="PE",
-                                                     underlyingprice=ltp))
+                                                     underlyingprice=ltp,MODE=params["USEEXPIERY"]))
                         strikelist[strike] = delta
 
                     print(strikelist)
+
+                    strike=fetchcorrectstrike(strikelist)
+                    if params["USEEXPIERY"] == "WEEKLY":
+                        optionsymbol = f"NSE:{symbol}{params['TradeExpiery']}{strike}PE"
+                    if params["USEEXPIERY"] == "MONTHLY":
+                        optionsymbol = f"NSE:{symbol}{convert_date_to_short_format(params['TradeExpiery'])}{strike}PE"
+
+                    # optionsymbol = f"NSE:{symbol}{params['TradeExpiery']}{strike}PE"
+                    params['OptionSymbol'] =optionsymbol
+                    optionltp = FyresIntegration.get_ltp(optionsymbol)
+                    algofoxsymbol=f"{symbol}|{convert_julian_date(params['TradeExpiery'])}|{strike}|PE"
+                    params['AlgoFoxSymbol'] = algofoxsymbol
+                    Algofox.Buy_order_algofox(symbol=algofoxsymbol,quantity=params["lotsize"],instrumentType="OPTIDX",
+                                              direction="BUY",product="MIS",strategy=params["strategytag"],order_typ="MARKET",price=optionltp,username=username,password=password,role=role,signal=signal)
 
 
 
                     params['TradeActive']= "PUTTRADEACTIVE"
                     put_trade = True  # in  put trade
-                    orderlog = f"Put trade executed  "
+                    orderlog = f"{timestamp}  Put trade executed @ {ltp} @ {params['OptionSymbol']}"
                     write_to_order_logs(orderlog)
                     print(orderlog)
 
 
                 elif (rsi_current > 50 or sp_current == 1) and params['put_signal']== True:
                     params['put_signal'] = False
-                    orderlog = f"Put signal canceled"
+                    orderlog = f"{timestamp}  Put signal canceled {params['OptionSymbol']}"
                     write_to_order_logs(orderlog)
                     print(orderlog)
 
@@ -316,66 +381,133 @@ def main_strategy():
                         delta = float(
                             option_delta_calculation(symbol=symbol, expiery=params['TradeExpiery'], strike=strike,
                                                      optiontype="CE",
-                                                     underlyingprice=ltp))
+                                                     underlyingprice=ltp,MODE=params["USEEXPIERY"]))
                         strikelist[strike] = delta
 
                     print(strikelist)
+                    strike = fetchcorrectstrike(strikelist)
+                    if params["USEEXPIERY"] == "WEEKLY":
+                        optionsymbol = f"NSE:{symbol}{params['TradeExpiery']}{strike}CE"
+                    if params["USEEXPIERY"] == "MONTHLY":
+                        optionsymbol = f"NSE:{symbol}{convert_date_to_short_format(params['TradeExpiery'])}{strike}CE"
+                    # optionsymbol = f"NSE:{symbol}{params['TradeExpiery']}{strike}CE"
+                    optionltp = FyresIntegration.get_ltp(optionsymbol)
+                    params['OptionSymbol'] = optionsymbol
+
+                    algofoxsymbol = f"{symbol}|{convert_julian_date(params['TradeExpiery'])}|{strike}|CE"
+                    params['AlgoFoxSymbol']= algofoxsymbol
+                    Algofox.Buy_order_algofox(symbol=algofoxsymbol, quantity=params["lotsize"], instrumentType="OPTIDX",
+                                              direction="BUY", product="MIS", strategy=params["strategytag"],
+                                              order_typ="MARKET", price=optionltp, username=username, password=password,
+                                              role=role, signal=signal)
+
                     call_trade = True  # in buy trade
-                    orderlog = f"Call trade executed  "
+                    orderlog = f"{timestamp}  Call trade executed @ {ltp} @ {params['OptionSymbol']}"
                     write_to_order_logs(orderlog)
                     print(orderlog)
 
                 elif (rsi_current < 50 or sp_current == -1) and params['call_signal']== True:
                     params['call_signal'] = False
-                    orderlog = f"Call signal canceled"
+                    orderlog = f"{timestamp} Call signal canceled {params['OptionSymbol']}"
                     write_to_order_logs(orderlog)
                     print(orderlog)
 
             if params['TradeActive']== "PUTTRADEACTIVE" and params['put_signal']== True:
                 if ltp<=params['breakeven_value'] and params['breakeven_value']>=0:
                     params['breakeven_value']=0
-                    orderlog = f"Breakeven executed @ {ltp} "
+                    params['breakcount']=params['breakcount']+1
+                    params['stoploss_value']=params['ep']
+                    orderlog = f"{timestamp} Breakeven executed @ {ltp} @  {params['OptionSymbol']}"
                     write_to_order_logs(orderlog)
                     print(orderlog)
 
                 if ltp<=params['target_value'] and params['target_value']>=0:
                     params['target_value']=0
                     params['put_signal'] = False
-                    orderlog = f"Target executed @ {ltp} "
+                    params['tgtcount'] = params['tgtcount'] + 1
+                    orderlog = f"{timestamp} Target executed @ {ltp} @{params['OptionSymbol']}"
+                    optionltp = FyresIntegration.get_ltp(params['OptionSymbol'] )
+                    Algofox.Sell_order_algofox(symbol=params['AlgoFoxSymbol'], quantity=params["lotsize"], instrumentType="OPTIDX",
+                                              direction="SELL", product="MIS", strategy=params["strategytag"],
+                                              order_typ="MARKET", price=optionltp, username=username, password=password,
+                                              role=role, signal=signal)
                     write_to_order_logs(orderlog)
                     print(orderlog)
 
                 if ltp>=params['stoploss_value'] and params['stoploss_value']>=0:
                     params['stoploss_value']=0
                     params['put_signal'] = False
-                    orderlog = f"Stoploss executed @ {ltp} "
+                    params['slcount'] = params['slcount'] + 1
+                    orderlog = f"{timestamp} Stoploss executed @ {ltp} @{params['OptionSymbol']}"
+                    optionltp = FyresIntegration.get_ltp(params['OptionSymbol'])
+                    Algofox.Sell_order_algofox(symbol=params['AlgoFoxSymbol'], quantity=params["lotsize"],
+                                               instrumentType="OPTIDX",
+                                               direction="SELL", product="MIS", strategy=params["strategytag"],
+                                               order_typ="MARKET", price=optionltp, username=username,
+                                               password=password,
+                                               role=role, signal=signal)
                     write_to_order_logs(orderlog)
                     print(orderlog)
 
             if params['TradeActive'] == "CALLTRADEACTIVE" and params['call_signal'] == True:
                 if ltp >= params['breakeven_value'] and params['breakeven_value'] >= 0:
                     params['breakeven_value'] = 0
-                    orderlog = f"Breakeven executed @ {ltp} "
+                    params['breakcount'] = params['breakcount'] + 1
+                    params['stoploss_value'] = params['ep']
+                    orderlog = f"{timestamp} Breakeven executed @ {ltp}  @{params['OptionSymbol']}"
                     write_to_order_logs(orderlog)
                     print(orderlog)
 
                 if ltp >= params['target_value'] and params['target_value'] >= 0:
                     params['target_value'] = 0
                     params['call_signal']=False
-                    orderlog = f"Target executed @ {ltp} "
+                    params['tgtcount'] = params['tgtcount'] + 1
+                    orderlog = f" {timestamp} Target executed @ {ltp} @{params['OptionSymbol']}"
+                    optionltp = FyresIntegration.get_ltp(params['OptionSymbol'])
+                    Algofox.Sell_order_algofox(symbol=params['AlgoFoxSymbol'], quantity=params["lotsize"],
+                                               instrumentType="OPTIDX",
+                                               direction="SELL", product="MIS", strategy=params["strategytag"],
+                                               order_typ="MARKET", price=optionltp, username=username,
+                                               password=password,
+                                               role=role, signal=signal)
                     write_to_order_logs(orderlog)
                     print(orderlog)
 
                 if ltp <= params['stoploss_value'] and params['stoploss_value'] >= 0:
                     params['stoploss_value'] = 0
                     params['call_signal'] = False
-                    orderlog = f"Stoploss executed @ {ltp} "
+                    params['slcount'] = params['slcount'] + 1
+                    orderlog = f"{timestamp} Stoploss executed @ {ltp} @{params['OptionSymbol']}"
+                    optionltp = FyresIntegration.get_ltp(params['OptionSymbol'])
+                    Algofox.Sell_order_algofox(symbol=params['AlgoFoxSymbol'], quantity=params["lotsize"],
+                                               instrumentType="OPTIDX",
+                                               direction="SELL", product="MIS", strategy=params["strategytag"],
+                                               order_typ="MARKET", price=optionltp, username=username,
+                                               password=password,
+                                               role=role, signal=signal)
                     write_to_order_logs(orderlog)
                     print(orderlog)
 
     except Exception as e:
         print("Error happened in Main strategy loop: ", str(e))
         traceback.print_exc()
+
+
+# def check_delta_every_strike():
+#     strikelist=getstrikes(ltp=custom_round(price=22475.85, symbol="NIFTY"), step=5, strikestep=50)
+#     for strike in strikelist:
+#         delta = float( option_delta_calculation(symbol="NIFTY", expiery=24509, strike=strike, optiontype="CE", underlyingprice=22475))
+#         strikelist[strike] = delta
+#
+#     print(strikelist)
+#     print(find_nearest_greater_than_six_tenths(strikelist))
+#
+#
+#
+#
+# check_delta_every_strike()
+
+
 
 
 while True:
