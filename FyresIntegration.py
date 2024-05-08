@@ -147,6 +147,8 @@ def fetchOHLC(symbol, rsi_period, supertrend_period, supertrend_multiplier):
     df["Supertrend Signal"] = ta.supertrend(high=df['high'], low=df['low'], close=df['close'], length=supertrend_period,
                                             multiplier=supertrend_multiplier)[colname2]
 
+    df.to_csv("check.csv")
+
 
     return df.tail(5)
 

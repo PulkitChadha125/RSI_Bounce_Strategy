@@ -60,10 +60,14 @@ def option_delta_calculation(symbol,expiery,strike,optiontype,underlyingprice,MO
         distanceexp=expiery
     print("distanceexp: ",distanceexp)
     t= (distanceexp-datetime.now())/timedelta(days=1)/365
+    print("t: ",t)
     if optiontype=="CE":
         fg="c"
     else :
         fg = "p"
+    print("optionltp: ",optionltp)
+    print("underlyingprice: ", underlyingprice)
+    print("strike: ", strike)
     value=get_delta(strikeltp=optionltp, underlyingprice=underlyingprice, strike=strike, timeexpiery=t,flag=fg ,riskfreeinterest=0.1)
     return value
 
@@ -92,16 +96,21 @@ def custom_round(price, symbol):
 
     return rounded_price
 
-def getstrikes(ltp, step , strikestep):
+def getstrikes_call(ltp, step , strikestep):
     result = {}
     result[int(ltp)] = None
-    for i in range(step):
-        result[int(ltp - strikestep * (i + 1))] = None
+
     for i in range(step):
         result[int(ltp + strikestep * (i + 1))] = None
     return result
 
+def getstrikes_put(ltp, step , strikestep):
+    result = {}
+    result[int(ltp)] = None
+    for i in range(step):
+        result[int(ltp - strikestep * (i + 1))] = None
 
+    return result
 
 
 def write_to_order_logs(message):
@@ -161,6 +170,14 @@ def get_user_settings():
                 'target_value': False,
                 'TradeActive':None,
                 'pattern':None,
+                "runtime": datetime.now(),
+                "cool": row['Sync'],
+                "sp_current": None,
+                "sp_previous": None,
+                "rsi_current": None,
+                "rsi_previous": None,
+                "high":None,
+                "low":None,
             }
             result_dict[row['Symbol']] = symbol_dict
         print("result_dict: ", result_dict)
@@ -249,6 +266,28 @@ def callSticky(high):
     return buy_price
 
 
+def round_down_to_interval(dt, interval_minutes):
+    remainder = dt.minute % interval_minutes
+    minutes_to_current_boundary = remainder
+
+    rounded_dt = dt - timedelta(minutes=minutes_to_current_boundary)
+
+    rounded_dt = rounded_dt.replace(second=0, microsecond=0)
+
+    return rounded_dt
+def determine_min(minstr):
+    min=0
+    if minstr =="minute":
+        min=1
+    if minstr =="5minute":
+        min=5
+    if minstr =="15minute":
+        min=15
+    if minstr =="30minute":
+        min=30
+
+    return min
+
 
 
 def main_strategy():
@@ -268,21 +307,50 @@ def main_strategy():
                 new_date_string = date_object.strftime('%y%b').upper()
                 formatedsymbol= f"NSE:{params['Symbol']}{new_date_string}FUT"
                 print(formatedsymbol)
-                data= FyresIntegration.fetchOHLC(symbol=formatedsymbol,rsi_period=params['RSI_Period'] ,supertrend_period=params['SP_Period'],supertrend_multiplier=params['SP_MULTIPLIER'])
+                print(FyresIntegration.get_ltp(formatedsymbol))
+                if datetime.now() >= params["runtime"]:
+                    try:
+                        if params["cool"] == True :
+                            time.sleep(1)
+                            data= FyresIntegration.fetchOHLC(symbol=formatedsymbol,rsi_period=params['RSI_Period']
+                                                             ,supertrend_period=params['SP_Period'],
+                                                             supertrend_multiplier=params['SP_MULTIPLIER'])
 
-                # print("relevant data= ",data.iloc[-2]['date'])//current
-                sp_current=data.iloc[-2]['Supertrend Signal']
-                sp_previous=data.iloc[-3]['Supertrend Signal']
-                rsi_current=data.iloc[-2]['rsi']
-                rsi_previous=data.iloc[-3]['rsi']
-                high=data.iloc[-2]['high']
-                prevhigh=data.iloc[-3]['high']
-                low=data.iloc[-2]['low']
-                close=data.iloc[-2]['close']
-                prevclose=data.iloc[-3]['close']
-                prevthirdclose=data.iloc[-4]['close']
-                prevlow=data.iloc[-3]['low']
-                ltp=FyresIntegration.get_ltp(formatedsymbol)
+                            params["sp_current"]= data.iloc[-2]['Supertrend Signal']
+                            params["sp_previous"]= data.iloc[-3]['Supertrend Signal']
+                            params["rsi_current"]= data.iloc[-2]['rsi']
+                            params["rsi_previous"]= data.iloc[-3]['rsi']
+                            params["high"]=data.iloc[-2]['high']
+                            params["low"]=data.iloc[-2]['low']
+                            print("Candle time_value: ", data.iloc[-1]["date"])
+                            next_specific_part_time = datetime.now() + timedelta(
+                                seconds=determine_min("minute") * 60)
+                            next_specific_part_time = round_down_to_interval(next_specific_part_time,
+                                                                             determine_min("minute"))
+                            print("Next datafetch time = ", next_specific_part_time)
+                            params['runtime'] = next_specific_part_time
+
+                    except Exception as e:
+                        print("Error happened in Histry data fetching  strategy loop: ", str(e))
+
+                ltp = FyresIntegration.get_ltp(formatedsymbol)
+                high= params["high"]
+                low= params["low"]
+                print("ltp: ", ltp)
+                print("high: ",high)
+                print("low: ", low)
+                print("buyprice: ", buyprice)
+                print("params['pattern']:",params['pattern'])
+                print("params['TradeActive']:", params['TradeActive'])
+                sp_current = params["sp_current"]
+                sp_previous = params["sp_previous"]
+                rsi_current = params["rsi_current"]
+                rsi_previous = params["rsi_previous"]
+                print("sp_current: ", sp_current)
+                print("sp_previous: ", sp_previous)
+                print("rsi_current: ", rsi_current)
+                print("rsi_previous: ", rsi_previous)
+
 
 
             if  (
@@ -331,9 +399,10 @@ def main_strategy():
 
             if params['pattern']== "PUT":
                 if ltp <= buyprice and buyprice>0 and params['put_signal']== True  and params['TradeActive']==None:
-                    # symbole_gen_Put()
-                    # strikelist=getstrikes(ltp=custom_round(price=ltp, symbol=symbol), step=params['NumberOfstrike'], strikestep=params['strikestep'])
-                    strikelist = getstrikes(ltp=custom_round(price=ltp, symbol=symbol), step=params['NumberOfstrike'], strikestep=params['strikestep'])
+                    orderlog = f"{timestamp}  Put trade triggered wait for execution"
+                    write_to_order_logs(orderlog)
+                    print(orderlog)
+                    strikelist = getstrikes_put(ltp=custom_round(price=ltp, symbol=symbol), step=params['NumberOfstrike'], strikestep=params['strikestep'])
                     for strike in strikelist:
                         delta = float(
                             option_delta_calculation(symbol=symbol, expiery=params['TradeExpiery'], strike=strike, optiontype="PE",
@@ -372,10 +441,12 @@ def main_strategy():
                     print(orderlog)
 
             if params['pattern'] == "CALL":
-                if ltp >= buyprice and buyprice>0and params['call_signal']== True  and params['TradeActive']==None:
-                    # symbole_gen_Call()
+                if ltp >= buyprice and buyprice>0 and params['call_signal']== True  and params['TradeActive']==None:
+                    orderlog = f"{timestamp}  Call trade triggered wait for execution"
+                    write_to_order_logs(orderlog)
+                    print(orderlog)
                     params['TradeActive'] = "CALLTRADEACTIVE"
-                    strikelist = getstrikes(ltp=custom_round(price=ltp, symbol=symbol), step=params['NumberOfstrike'],
+                    strikelist = getstrikes_call(ltp=custom_round(price=ltp, symbol=symbol), step=params['NumberOfstrike'],
                                             strikestep=params['strikestep'])
                     for strike in strikelist:
                         delta = float(
@@ -496,5 +567,6 @@ def main_strategy():
 
 while True:
     main_strategy()
+    time.sleep(1)
 
 

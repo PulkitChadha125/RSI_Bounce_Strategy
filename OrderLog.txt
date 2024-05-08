@@ -1,1 +1,5 @@
-06/05/2024 15:24:59 Put signal Genarated  NSE:NIFTY24MAYFUT,@ 22548.9 candle high 22557.0, Target = 22500.05, Stoploss= 22600.05, Breakeven=22530.05 
+08/05/2024 13:58:01 Put signal Genarated  NSE:NIFTY24MAYFUT,@ 22418.9 candle high 22434.05, Target = 22400.45, Stoploss= 22440.45, Breakeven=22405.45 
+08/05/2024 14:03:02  Put signal canceled None
+08/05/2024 14:04:59 Put signal Genarated  NSE:BANKNIFTY24MAYFUT,@ 48198.9 candle high 48219.6, Target = 48161.0, Stoploss= 48241.0, Breakeven=48171.0 
+08/05/2024 14:05:59 Put signal Genarated  NSE:NIFTY24MAYFUT,@ 22398.9 candle high 22428.6, Target = 22379.0, Stoploss= 22419.0, Breakeven=22384.0 
+08/05/2024 14:05:59  Put trade triggered wait for execution
